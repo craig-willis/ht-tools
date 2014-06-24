@@ -9,6 +9,8 @@ import org.apache.solr.client.solrj.SolrServerException;
 import org.apache.solr.client.solrj.impl.CloudSolrServer;
 import org.apache.solr.common.SolrInputDocument;
 
+import edu.illinois.lis.ht.index.mpi.HT2Solr.Unit;
+
 /**
  * Simple indexer that relies on SolrCloud for document routing. 
  *
@@ -28,6 +30,10 @@ public class SolrCloudIndexer
 		String ocrBasePath = PropertyManager.getProperty("ocrBasePath");	
 		/* Read the MARC basepath from the config. Assumes one MARC XML file per volume. */
 		String marcBasePath = PropertyManager.getProperty("marcBasePath");
+		/* Limit indexing to a set of languages */
+		List<String> languages = PropertyManager.getPropertyAsList("languages");
+		/* Indexing level: page or volume */
+		String indexingUnit = PropertyManager.getProperty("indexingUnit");
 		
 		/* Hostname for logging */
 		hostname	 = InetAddress.getLocalHost().getHostName();
@@ -36,12 +42,7 @@ public class SolrCloudIndexer
 		this.cloudClient = new CloudSolrServer(zkHost);
 		cloudClient.setDefaultCollection("htrc");
 		
-		/* Not used for now */
-		//cloudClient.setDefaultCollection();
-		//cloudClient.setZkClientTimeout();
-		//cloudClient.setZkConnectTimeout(zkConnectTimeout);	
-		
-		this.ht2solr = new HT2Solr(ocrBasePath, marcBasePath);
+		this.ht2solr = new HT2Solr(ocrBasePath, marcBasePath, languages, Unit.valueOf(indexingUnit));
 	}
 	
 	/**
@@ -89,10 +90,6 @@ public class SolrCloudIndexer
 				}
 			} while (retry < 2);
 			long t3 = System.currentTimeMillis();
-						
-			// Note: No commit for now: rely on Solr 4.5 hard/soft autocommit configuration.
-			//cloudClient.commit();
-			//long t4 = System.currentTimeMillis();
 	
 			System.out.println("Indexing finished," + hostname + "," + nodeId + "," + volumeId +  "," + numPages + "," + (t2-t1) + "," + (t3-t2));
 		} catch (Exception e) {
@@ -100,23 +97,5 @@ public class SolrCloudIndexer
 			e.printStackTrace();
 		}
 	}
-	
-	/* Commit not used for now. Rely on Solr 4.5 hard/soft autocommit configuration */
-	/*
-	public void commit(int rank)
-	{
-		try {
-			long t1 = System.currentTimeMillis();
-			cloudClient.commit();
-			long t2 = System.currentTimeMillis();
-			
-			System.out.println(hostname + "," + rank + "," + commitPages + ",commit-time=" + (t2-t1));
-			commitPages = 0;
-		} catch (Exception e) {
-			System.out.println("Error during commit");
-			e.printStackTrace();
-		}
-	}
-	*/
 	
 }

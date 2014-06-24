@@ -51,65 +51,82 @@ import org.w3c.dom.NodeList;
  */
 public class HT2Solr 
 {
+	enum Unit {
+		VOLUME,
+		PAGE
+	}
 	String ocrBasePath = "";
 	String marcBasePath = "";
+	List<String> languages = new ArrayList<String> ();
+	Unit indexingUnit = Unit.PAGE;
 
 	public static void main(String[] args) throws Exception {
 	
-		HT2Solr h = new HT2Solr("test", "test");
+		HT2Solr h = new HT2Solr("test", "test", Unit.PAGE);
 		h.getSolrDocuments("miua.0048030.1838.001");
 		
 	}
 
-	public HT2Solr(String ocrBasePath, String marcBasePath)
+	public HT2Solr(String ocrBasePath, String marcBasePath, Unit indexingUnit)
+	{
+		this(ocrBasePath, marcBasePath, new ArrayList<String>(), indexingUnit);
+	}
+	
+	public HT2Solr(String ocrBasePath, String marcBasePath, List<String> languages, 
+			Unit indexingUnit)
 	{
 		this.ocrBasePath = ocrBasePath;
 		this.marcBasePath = marcBasePath;
+		this.indexingUnit = indexingUnit;
+		this.languages = languages;
 	}
 	
+	/** 
+	 * Given a volume id, return a set of Solr documents.
+	 * @param volumeId
+	 * @return
+	 * @throws Exception
+	 */
 	public List<SolrInputDocument> getSolrDocuments(String volumeId) throws Exception
 	{
-		List<SolrInputDocument> solrDocs = new ArrayList<SolrInputDocument>();
-		
 		volumeId = URLDecoder.decode(volumeId, "UTF-8");
 		Pairtree pt = new Pairtree();
 		
-        String sourcePart = volumeId.substring(0, volumeId.indexOf("."));
-        String volumePart = volumeId.substring(volumeId.indexOf(".")+1, volumeId.length());
-        String uncleanId = pt.uncleanId(volumePart);
-        String path = pt.mapToPPath(uncleanId);
-        String cleanId = pt.cleanId(volumePart);
-        
-        String zipPath = ocrBasePath + File.separator + sourcePart 
-        		+ File.separator + "pairtree_root" 
-        		+ File.separator + path 
-        		+ File.separator + cleanId
-        		+ File.separator + cleanId + ".zip";
-
-        File metsFile = new File( ocrBasePath + File.separator + sourcePart 
-        		+ File.separator + "pairtree_root" 
-        		+ File.separator + path 
-        		+ File.separator + cleanId
-        		+ File.separator + cleanId + ".mets.xml" );
-      
-        File marcFile = new File( marcBasePath + File.separator + sourcePart 
-        		+ File.separator + "pairtree_root" 
-        		+ File.separator + path 
-        		+ File.separator + cleanId
-        		+ File.separator + cleanId + ".marc.xml" );
-
+	    String sourcePart = volumeId.substring(0, volumeId.indexOf("."));
+	    String volumePart = volumeId.substring(volumeId.indexOf(".")+1, volumeId.length());
+	    String uncleanId = pt.uncleanId(volumePart);
+	    String path = pt.mapToPPath(uncleanId);
+	    String cleanId = pt.cleanId(volumePart);
+	    
+	    String zipPath = ocrBasePath + File.separator + sourcePart 
+	    		+ File.separator + "pairtree_root" 
+	    		+ File.separator + path 
+	    		+ File.separator + cleanId
+	    		+ File.separator + cleanId + ".zip";
+	
+	    File metsFile = new File( ocrBasePath + File.separator + sourcePart 
+	    		+ File.separator + "pairtree_root" 
+	    		+ File.separator + path 
+	    		+ File.separator + cleanId
+	    		+ File.separator + cleanId + ".mets.xml" );
+	  
+	    File marcFile = new File( marcBasePath + File.separator + sourcePart 
+	    		+ File.separator + "pairtree_root" 
+	    		+ File.separator + path 
+	    		+ File.separator + cleanId
+	    		+ File.separator + cleanId + ".marc.xml" );
+	
 	    String lang = getLanguage(marcFile);
-	    if (!lang.equals("eng"))
+	    if (languages.size() > 0 && !languages.contains(lang))
 	    {
-	    	System.out.println("Skipping non-English volume");
-	    	// Skip non-english documents
-	    	return solrDocs;
+	    	System.out.println("Skipping volume (no language match)");
+	    	return new ArrayList<SolrInputDocument>();
 	    }
 	    
 		String marc = getMarcData(marcFile);
-        
-        ZipFile zipFile = new ZipFile(zipPath);
-        			
+	    
+	    ZipFile zipFile = new ZipFile(zipPath);
+	    			
 		DocumentBuilderFactory domFactory = 
 				DocumentBuilderFactory.newInstance();
 		domFactory.setNamespaceAware(true); 
@@ -117,13 +134,25 @@ public class HT2Solr
 	    Document doc = builder.parse(metsFile);
 	    XPath xpath = XPathFactory.newInstance().newXPath();
 	    xpath.setNamespaceContext(new HTNamespaceContext());	    
-	
-		    
+	    
 	    Map<String, MetsFile> metsFileMap = getMetsFileMap(doc, xpath);
 	    Map<String, String> pageLabels = getPageLabels(doc, xpath, metsFileMap);
 		    
-
-		    
+		
+		if (indexingUnit == Unit.PAGE) {
+			return getSolrDocumentsFromPages(volumeId, zipFile, metsFileMap, pageLabels, marc);
+		} else {
+			return getSolrDocumentsFromVolumes(volumeId, zipFile, metsFileMap, pageLabels, marc);
+		}
+		
+	}
+	
+	protected List<SolrInputDocument> getSolrDocumentsFromPages(String volumeId, 
+			ZipFile zipFile, Map<String, MetsFile> metsFileMap, Map<String, String> pageLabels,
+			String marc) 
+			throws Exception
+	{
+		List<SolrInputDocument> solrDocs = new ArrayList<SolrInputDocument>();
 		
 		Enumeration<? extends ZipEntry> entries = zipFile.entries();
 	
@@ -177,6 +206,53 @@ public class HT2Solr
 	    return solrDocs;
 	}
 	
+	
+	/**
+	 * Combines all pages into a single Solr document
+	 * @return
+	 * @throws Exception
+	 */
+	protected List<SolrInputDocument> getSolrDocumentsFromVolumes(String volumeId, 
+			ZipFile zipFile, Map<String, MetsFile> metsFileMap, Map<String, String> pageLabels,
+			String marc) 
+			throws Exception
+	{
+		List<SolrInputDocument> solrDocs = new ArrayList<SolrInputDocument>();
+		
+		String text = "";
+		Enumeration<? extends ZipEntry> entries = zipFile.entries();
+	    while(entries.hasMoreElements()){
+	        ZipEntry entry = entries.nextElement();
+	
+	    	if (entry.isDirectory())
+	        	continue;
+		    		   
+	        String fileName = entry.getName();
+	        String dirPart = fileName.substring(0, fileName.indexOf("/"));
+	        String namePart = fileName.substring( fileName.indexOf("/") + 1, fileName.length());
+	        // Skip the concatenated version of the file
+	        if (namePart.equals(dirPart + ".txt")) 
+	        	continue;
+	        	        
+	        InputStream is = zipFile.getInputStream(entry);
+	        
+	        BufferedReader br = new BufferedReader(new InputStreamReader(is));
+	        String line;
+	        while ((line = br.readLine()) != null) 
+	        	text += line + "\n";
+	    }
+	    
+        SolrInputDocument solrDoc = new SolrInputDocument();
+        solrDoc.addField("id", volumeId);
+        solrDoc.addField("volumeId", volumeId);
+        solrDoc.addField("marc", marc);
+        solrDoc.addField("text", text);
+
+        solrDocs.add(solrDoc);
+
+	    return solrDocs;
+	}
+		
 
 	public static Map<String, String> getPageIdMap(Document doc, XPath xpath) 
 			throws XPathExpressionException
